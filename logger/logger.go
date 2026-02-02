@@ -4,18 +4,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Logger handles daily log file rotation and markdown formatting
 type Logger struct {
-	logDir      string
-	currentDate string
-	currentFile *os.File
-	mu          sync.Mutex
-	fileChanges []FileChange
-	gitCommits  []GitCommit
+	logDir           string
+	currentDate      string
+	currentFile      *os.File
+	mu               sync.Mutex
+	fileChanges      []FileChange
+	gitCommits       []GitCommit
+	sectionsWritten  map[string]bool // Track which sections have been written
 }
 
 // FileChange represents a file system change
@@ -42,10 +44,11 @@ func NewLogger(logDir string) (*Logger, error) {
 	}
 
 	logger := &Logger{
-		logDir:      logDir,
-		currentDate: time.Now().Format("2006-01-02"),
-		fileChanges: make([]FileChange, 0),
-		gitCommits:  make([]GitCommit, 0),
+		logDir:          logDir,
+		currentDate:     time.Now().Format("2006-01-02"),
+		fileChanges:     make([]FileChange, 0),
+		gitCommits:      make([]GitCommit, 0),
+		sectionsWritten: make(map[string]bool),
 	}
 
 	if err := logger.ensureLogFile(); err != nil {
@@ -70,6 +73,7 @@ func (l *Logger) ensureLogFile() error {
 	if l.currentFile != nil && l.currentDate != today {
 		l.currentFile.Close()
 		l.currentFile = nil
+		l.sectionsWritten = make(map[string]bool) // Reset for new day
 	}
 
 	// Open new file if needed
@@ -80,13 +84,20 @@ func (l *Logger) ensureLogFile() error {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
 
-		// Write header if file is new
+		// Check if file is new and what sections exist
 		stat, err := file.Stat()
-		if err == nil && stat.Size() == 0 {
+		isNew := err != nil || stat.Size() == 0
+		
+		if isNew {
 			if _, err := file.WriteString(fmt.Sprintf("# Standup Log - %s\n\n", today)); err != nil {
 				file.Close()
 				return fmt.Errorf("failed to write log header: %w", err)
 			}
+			// Reset sections written for new file
+			l.sectionsWritten = make(map[string]bool)
+		} else {
+			// Check existing sections in file
+			l.checkExistingSections(logPath)
 		}
 
 		l.currentFile = file
@@ -94,6 +105,25 @@ func (l *Logger) ensureLogFile() error {
 	}
 
 	return nil
+}
+
+// checkExistingSections reads the file to see which sections already exist
+func (l *Logger) checkExistingSections(logPath string) {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return
+	}
+	
+	content := string(data)
+	if strings.Contains(content, "## File Changes") {
+		l.sectionsWritten["File Changes"] = true
+	}
+	if strings.Contains(content, "## Git Commits") {
+		l.sectionsWritten["Git Commits"] = true
+	}
+	if strings.Contains(content, "## Summary") {
+		l.sectionsWritten["Summary"] = true
+	}
 }
 
 // LogFileChange logs a file system change
@@ -146,8 +176,12 @@ func (l *Logger) Flush() error {
 
 	// Write file changes section if we have any
 	if len(fileChanges) > 0 {
-		if _, err := l.currentFile.WriteString("## File Changes\n\n"); err != nil {
-			return err
+		// Only write section header if it doesn't exist yet
+		if !l.sectionsWritten["File Changes"] {
+			if _, err := l.currentFile.WriteString("## File Changes\n\n"); err != nil {
+				return err
+			}
+			l.sectionsWritten["File Changes"] = true
 		}
 
 		for _, change := range fileChanges {
@@ -172,8 +206,12 @@ func (l *Logger) Flush() error {
 
 	// Write git commits section if we have any
 	if len(gitCommits) > 0 {
-		if _, err := l.currentFile.WriteString("## Git Commits\n\n"); err != nil {
-			return err
+		// Only write section header if it doesn't exist yet
+		if !l.sectionsWritten["Git Commits"] {
+			if _, err := l.currentFile.WriteString("## Git Commits\n\n"); err != nil {
+				return err
+			}
+			l.sectionsWritten["Git Commits"] = true
 		}
 
 		for _, commit := range gitCommits {
@@ -203,16 +241,20 @@ func (l *Logger) Flush() error {
 		}
 	}
 
-	// Write summary
+	// Write summary only if we have changes to report
+	// Summary will be written at the very end, so we'll append it
+	// Note: This means multiple summaries may appear, but they'll show incremental state
 	summary := l.generateSummaryLocked(fileChanges, gitCommits)
-	if _, err := l.currentFile.WriteString("## Summary\n\n"); err != nil {
-		return err
-	}
-	if _, err := l.currentFile.WriteString(summary); err != nil {
-		return err
-	}
-	if _, err := l.currentFile.WriteString("\n"); err != nil {
-		return err
+	if summary != "" && summary != "- No changes recorded\n" {
+		if _, err := l.currentFile.WriteString("## Summary\n\n"); err != nil {
+			return err
+		}
+		if _, err := l.currentFile.WriteString(summary); err != nil {
+			return err
+		}
+		if _, err := l.currentFile.WriteString("\n"); err != nil {
+			return err
+		}
 	}
 
 	// Clear buffers

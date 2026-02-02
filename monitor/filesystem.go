@@ -12,12 +12,14 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"standup-helper/config"
 	"standup-helper/logger"
+	"standup-helper/summarizer"
 )
 
 // FileSystemMonitor monitors file system changes
 type FileSystemMonitor struct {
 	config     *config.Config
 	logger     *logger.Logger
+	summarizer *summarizer.Summarizer
 	watcher    *fsnotify.Watcher
 	debouncer  map[string]*time.Timer
 	debouncerMu sync.Mutex
@@ -32,13 +34,21 @@ func NewFileSystemMonitor(cfg *config.Config, log *logger.Logger) (*FileSystemMo
 		return nil, fmt.Errorf("failed to create file watcher: %w", err)
 	}
 
+	// Create summarizer if enabled
+	summ := summarizer.NewSummarizer(
+		cfg.Summarizer.BaseURL,
+		cfg.Summarizer.Model,
+		cfg.Summarizer.Enabled,
+	)
+
 	return &FileSystemMonitor{
-		config:    cfg,
-		logger:    log,
-		watcher:   watcher,
-		debouncer: make(map[string]*time.Timer),
-		stopChan:  make(chan struct{}),
-		doneChan:  make(chan struct{}),
+		config:     cfg,
+		logger:     log,
+		summarizer: summ,
+		watcher:    watcher,
+		debouncer:  make(map[string]*time.Timer),
+		stopChan:   make(chan struct{}),
+		doneChan:   make(chan struct{}),
 	}, nil
 }
 
@@ -163,6 +173,16 @@ func (m *FileSystemMonitor) processFileChange(filePath string, action string) {
 		}
 	}
 
+	// Summarize diff if summarizer is enabled
+	if diff != "" && m.summarizer != nil {
+		summary, err := m.summarizer.SummarizeDiff(diff, filePath)
+		if err == nil && summary != "" {
+			// Use summary instead of full diff
+			diff = fmt.Sprintf("Summary: %s\n\nFull diff:\n%s", summary, diff)
+		}
+		// If summarization fails, we'll just use the original diff
+	}
+
 	change := logger.FileChange{
 		Path:      filePath,
 		Action:    action,
@@ -189,41 +209,82 @@ func (m *FileSystemMonitor) getFileDiff(filePath string) (string, error) {
 		return "", err
 	}
 
-	// Run git diff
-	cmd := exec.Command("git", "diff", "--no-color", relPath)
+	// Check git status first
+	cmd := exec.Command("git", "status", "--porcelain", relPath)
+	cmd.Dir = gitRoot
+	statusOutput, err := cmd.Output()
+	status := strings.TrimSpace(string(statusOutput))
+	
+	// Try different diff strategies based on git status
+	var diff string
+	
+	if strings.HasPrefix(status, "??") {
+		// New untracked file, show file content as diff
+		content, err := os.ReadFile(filePath)
+		if err == nil {
+			lines := strings.Split(string(content), "\n")
+			diffLines := make([]string, 0, len(lines))
+			for _, line := range lines {
+				diffLines = append(diffLines, "+"+line)
+			}
+			diff = strings.Join(diffLines, "\n")
+			return diff, nil
+		}
+		return "", fmt.Errorf("failed to read new file")
+	}
+	
+	// Try git diff (staged changes)
+	cmd = exec.Command("git", "diff", "--no-color", "--cached", relPath)
 	cmd.Dir = gitRoot
 	output, err := cmd.Output()
-	if err != nil {
-		// If git diff fails (e.g., file not staged), try git diff HEAD
-		cmd = exec.Command("git", "diff", "--no-color", "HEAD", relPath)
-		cmd.Dir = gitRoot
-		output, err = cmd.Output()
-		if err != nil {
-			return "", err
+	if err == nil {
+		diff = strings.TrimSpace(string(output))
+		if diff != "" {
+			return diff, nil
 		}
 	}
-
-	diff := strings.TrimSpace(string(output))
-	if diff == "" {
-		// File might be new, check if it's untracked
-		cmd = exec.Command("git", "status", "--porcelain", relPath)
+	
+	// Try git diff HEAD (unstaged changes vs HEAD)
+	cmd = exec.Command("git", "diff", "--no-color", "HEAD", relPath)
+	cmd.Dir = gitRoot
+	output, err = cmd.Output()
+	if err == nil {
+		diff = strings.TrimSpace(string(output))
+		if diff != "" {
+			return diff, nil
+		}
+	}
+	
+	// Try git diff (working directory changes)
+	cmd = exec.Command("git", "diff", "--no-color", relPath)
+	cmd.Dir = gitRoot
+	output, err = cmd.Output()
+	if err == nil {
+		diff = strings.TrimSpace(string(output))
+		if diff != "" {
+			return diff, nil
+		}
+	}
+	
+	// If file exists in git, try to show what changed in the last commit
+	cmd = exec.Command("git", "log", "-1", "--pretty=format:", "--name-only", relPath)
+	cmd.Dir = gitRoot
+	output, err = cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
+		// File was in last commit, show diff from that commit
+		cmd = exec.Command("git", "diff", "--no-color", "HEAD~1", "HEAD", "--", relPath)
 		cmd.Dir = gitRoot
-		statusOutput, err := cmd.Output()
-		if err == nil && strings.HasPrefix(string(statusOutput), "??") {
-			// New untracked file, show file content as diff
-			content, err := os.ReadFile(filePath)
-			if err == nil {
-				lines := strings.Split(string(content), "\n")
-				diffLines := make([]string, 0, len(lines))
-				for _, line := range lines {
-					diffLines = append(diffLines, "+"+line)
-				}
-				diff = strings.Join(diffLines, "\n")
+		output, err = cmd.Output()
+		if err == nil {
+			diff = strings.TrimSpace(string(output))
+			if diff != "" {
+				return diff, nil
 			}
 		}
 	}
-
-	return diff, nil
+	
+	// No diff available
+	return "", fmt.Errorf("no diff available")
 }
 
 // findGitRoot finds the git repository root for a given file path

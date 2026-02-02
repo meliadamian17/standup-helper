@@ -7,11 +7,47 @@ A background macOS service that monitors file changes and git commits in configu
 - **File System Monitoring**: Tracks file creates, modifications, and deletes using efficient file watching
 - **Git Commit Tracking**: Monitors git repositories and logs commits with messages, authors, and changed files
 - **Diff Capture**: Captures file diffs for changed files (when available)
+- **AI-Powered Summarization**: Optionally summarizes code diffs using local LLM (Ollama) for standup-friendly summaries
 - **Daily Logs**: Automatically rotates logs daily in markdown format for easy reading
 - **Zero Configuration**: Runs entirely in the background with minimal setup
 - **Low Overhead**: Debounced events and efficient polling minimize performance impact
 
 ## Installation
+
+### Prerequisites
+
+1. **Go 1.19 or later** (for building)
+2. **Git** (for commit tracking and diff generation)
+3. **Ollama** (optional, for AI-powered diff summarization)
+
+### Install Ollama (Optional, for Summarization)
+
+If you want to use AI-powered diff summarization:
+
+1. **Install Ollama:**
+   ```bash
+   # macOS
+   brew install ollama
+   
+   # Or download from https://ollama.ai
+   ```
+
+2. **Start Ollama:**
+   ```bash
+   ollama serve
+   ```
+   
+   Note: The service will attempt to start Ollama automatically if it's not running, but you may need to start it manually the first time.
+
+3. **Pull a model:**
+   ```bash
+   # Recommended lightweight models for summarization:
+   ollama pull llama3.2        # ~2GB, fast and efficient
+   ollama pull phi3            # ~2.3GB, very fast
+   ollama pull gemma2:2b       # ~1.6GB, extremely fast
+   ```
+
+### Install Standup Helper
 
 1. Build the binary:
 ```bash
@@ -55,16 +91,27 @@ git:
 filesystem:
   debounce: 2s
   track_diffs: true
+
+summarizer:
+  enabled: false
+  # base_url is optional - will be auto-detected from OLLAMA_HOST or common ports
+  model: llama3.2
 ```
 
 ### Configuration Options
 
-- **directories**: List of absolute paths to directories to monitor
+- **directories**: List of absolute paths (or `~/path`) to directories to monitor
 - **exclusions**: Patterns for files/directories to exclude from monitoring
 - **git.poll_interval**: How often to check for new git commits (default: 30s)
 - **git.track_commits**: Whether to track git commits (default: true)
 - **filesystem.debounce**: Delay before processing file changes to batch rapid edits (default: 2s)
 - **filesystem.track_diffs**: Whether to capture file diffs (default: true)
+- **summarizer.enabled**: Enable AI-powered diff summarization (default: false)
+- **summarizer.base_url**: Ollama API URL (optional, auto-detected if not set)
+  - Auto-detection checks `OLLAMA_HOST` environment variable first
+  - Then tries common ports (11434, 11435, 11436)
+  - Falls back to `http://localhost:11434` if not found
+- **summarizer.model**: Ollama model to use for summarization (default: llama3.2)
 
 ## Log Files
 
@@ -78,6 +125,9 @@ Example log format:
 ## File Changes
 - `src/main.go` (modified at 14:23:15)
   ```diff
+  Summary: Added new feature function to handle user authentication. Implemented error handling and validation logic.
+  
+  Full diff:
   + func newFeature() {
   +     // implementation
   + }
@@ -93,6 +143,10 @@ Example log format:
 - 2 commit(s)
 - 3 file(s) created
 ```
+
+### Summarization
+
+When summarization is enabled, diffs are automatically summarized using a local LLM. The summary appears above the full diff, providing a concise, standup-friendly explanation of what changed. If summarization fails or is disabled, only the full diff is shown.
 
 ## Manual Operation
 
@@ -146,6 +200,7 @@ rm -rf ~/.standup-helper
 - macOS (uses LaunchAgent for background service)
 - Go 1.19 or later (for building)
 - Git (for commit tracking and diff generation)
+- Ollama (optional, for AI-powered diff summarization)
 
 ## Performance
 
@@ -181,6 +236,15 @@ Common issues:
 - Ensure `track_commits: true` in config
 - Verify git repositories exist in monitored directories
 - Check git is installed and accessible
+
+### Summarization not working
+
+- Ensure Ollama is installed: `brew install ollama` or download from https://ollama.ai
+- Start Ollama: `ollama serve` (or let the service start it automatically)
+- Pull the model: `ollama pull <model-name>` (e.g., `ollama pull llama3.2`)
+- Verify the model name in config matches the pulled model
+- Check service logs for summarization errors: `tail -f ~/.standup-helper/logs/service.log`
+- If summarization fails, the service will continue with full diffs (no summarization)
 
 ## License
 

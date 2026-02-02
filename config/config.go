@@ -12,10 +12,11 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Directories []string    `yaml:"directories"`
-	Exclusions  []string    `yaml:"exclusions"`
-	Git         GitConfig   `yaml:"git"`
-	Filesystem  FSConfig    `yaml:"filesystem"`
+	Directories []string      `yaml:"directories"`
+	Exclusions  []string      `yaml:"exclusions"`
+	Git         GitConfig     `yaml:"git"`
+	Filesystem  FSConfig      `yaml:"filesystem"`
+	Summarizer  SummarizerConfig `yaml:"summarizer"`
 }
 
 // GitConfig contains git monitoring settings
@@ -28,6 +29,13 @@ type GitConfig struct {
 type FSConfig struct {
 	Debounce  time.Duration `yaml:"debounce"`
 	TrackDiffs bool          `yaml:"track_diffs"`
+}
+
+// SummarizerConfig contains summarization settings
+type SummarizerConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	BaseURL string `yaml:"base_url,omitempty"` // Optional - will be auto-detected if empty
+	Model   string `yaml:"model"`
 }
 
 // LoadConfig loads configuration from the specified path
@@ -107,6 +115,12 @@ func (c *Config) Validate() error {
 		c.Filesystem.Debounce = 2 * time.Second
 	}
 
+	// Set default summarizer config
+	// BaseURL will be auto-detected by the summarizer if empty
+	if c.Summarizer.Model == "" {
+		c.Summarizer.Model = "llama3.2" // Default to a common lightweight model
+	}
+
 	return nil
 }
 
@@ -150,6 +164,11 @@ func CreateDefaultConfig(configPath string) error {
 		Filesystem: FSConfig{
 			Debounce:  2 * time.Second,
 			TrackDiffs: true,
+		},
+		Summarizer: SummarizerConfig{
+			Enabled: false, // Disabled by default
+			BaseURL: "",    // Auto-detected if empty
+			Model:   "llama3.2",
 		},
 	}
 

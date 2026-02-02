@@ -13,6 +13,7 @@ import (
 	"standup-helper/install"
 	"standup-helper/logger"
 	"standup-helper/monitor"
+	"standup-helper/summarizer"
 )
 
 func main() {
@@ -70,6 +71,30 @@ func main() {
 		os.Exit(1)
 	}
 	defer log.Close()
+
+	// Initialize summarizer and ensure model is loaded if enabled
+	if cfg.Summarizer.Enabled {
+		summ := summarizer.NewSummarizer(
+			cfg.Summarizer.BaseURL, // Will auto-detect if empty
+			cfg.Summarizer.Model,
+			true,
+		)
+		
+		fmt.Println("Initializing summarization with Ollama...")
+		fmt.Printf("Detected Ollama at: %s\n", summ.GetBaseURL())
+		fmt.Printf("Ensuring Ollama is running and model '%s' is loaded...\n", cfg.Summarizer.Model)
+		if err := summ.EnsureModelLoaded(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to initialize summarization: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Make sure Ollama is installed and the model is available:\n")
+			fmt.Fprintf(os.Stderr, "  1. Install Ollama: https://ollama.ai\n")
+			fmt.Fprintf(os.Stderr, "  2. Pull the model: ollama pull %s\n", cfg.Summarizer.Model)
+			fmt.Fprintf(os.Stderr, "  3. Start Ollama: ollama serve\n")
+			fmt.Fprintf(os.Stderr, "Continuing without summarization...\n")
+			cfg.Summarizer.Enabled = false
+		} else {
+			fmt.Printf("✓ Model '%s' is ready for summarization.\n", cfg.Summarizer.Model)
+		}
+	}
 
 	// Create monitors
 	fsMonitor, err := monitor.NewFileSystemMonitor(cfg, log)

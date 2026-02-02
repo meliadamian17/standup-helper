@@ -18,4 +18,9 @@ git:
 
 filesystem:
   debounce: 2s
-  track_diffs: true
+  track_diffs: false 
+
+summarizer:
+  enabled: false
+  # base_url is optional - will be auto-detected from OLLAMA_HOST or common ports
+  model: llama3.2

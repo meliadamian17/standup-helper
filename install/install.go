@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"standup-helper/config"
@@ -28,6 +29,11 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 	<string>{{.LogPath}}</string>
 	<key>StandardErrorPath</key>
 	<string>{{.LogPath}}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>{{.PathEnv}}</string>
+	</dict>
 </dict>
 </plist>
 `
@@ -115,13 +121,33 @@ func generatePlist(plistPath, binaryPath, logPath string) error {
 	}
 	defer file.Close()
 
+	// Get PATH environment variable with common Homebrew paths
+	pathEnv := os.Getenv("PATH")
+	if pathEnv == "" {
+		// Default PATH for macOS LaunchAgents (minimal)
+		pathEnv = "/usr/bin:/bin:/usr/sbin:/sbin"
+	}
+	// Add common Homebrew paths
+	homebrewPaths := []string{
+		"/opt/homebrew/bin",      // Apple Silicon
+		"/usr/local/bin",         // Intel
+		filepath.Join(os.Getenv("HOME"), ".local/bin"), // User bin
+	}
+	for _, p := range homebrewPaths {
+		if !strings.Contains(pathEnv, p) {
+			pathEnv = p + ":" + pathEnv
+		}
+	}
+
 	// Execute template
 	data := struct {
 		BinaryPath string
 		LogPath    string
+		PathEnv    string
 	}{
 		BinaryPath: binaryPath,
 		LogPath:    filepath.Join(logPath, "service.log"),
+		PathEnv:    pathEnv,
 	}
 
 	if err := tmpl.Execute(file, data); err != nil {

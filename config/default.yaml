@@ -1,0 +1,21 @@
+directories:
+  # Add directories to monitor here
+  # Example:
+  # - /Users/meliadamian17/repos/project1
+  # - /Users/meliadamian17/repos/project2
+
+exclusions:
+  - node_modules
+  - .git
+  - dist
+  - build
+  - .DS_Store
+  - "*.log"
+
+git:
+  poll_interval: 30s
+  track_commits: true
+
+filesystem:
+  debounce: 2s
+  track_diffs: true

@@ -161,6 +161,7 @@ func CreateDefaultConfig(configPath string) error {
 		Exclusions: []string{
 			"node_modules",
 			".git",
+			".standup-helper", // Avoid watching our own log/config directory
 			"dist",
 			"build",
 			".DS_Store",

@@ -8,6 +8,7 @@ directories:
 exclusions:
   - node_modules
   - .git
+  - .standup-helper   # Avoid watching our own log/config directory
   - dist
   - build
   - .DS_Store

@@ -16,16 +16,21 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// pathCooldown prevents re-processing the same path within this window (e.g. repeated fsnotify events).
+const pathCooldown = 2 * time.Minute
+
 // FileSystemMonitor monitors file system changes
 type FileSystemMonitor struct {
-	config     *config.Config
-	logger     *logger.Logger
-	summarizer *summarizer.Summarizer
-	watcher    *fsnotify.Watcher
-	debouncer  map[string]*time.Timer
-	debouncerMu sync.Mutex
-	stopChan   chan struct{}
-	doneChan   chan struct{}
+	config        *config.Config
+	logger        *logger.Logger
+	summarizer    *summarizer.Summarizer
+	watcher       *fsnotify.Watcher
+	debouncer     map[string]*time.Timer
+	debouncerMu   sync.Mutex
+	lastProcessed map[string]time.Time
+	processMu     sync.Mutex
+	stopChan      chan struct{}
+	doneChan      chan struct{}
 }
 
 // NewFileSystemMonitor creates a new file system monitor. If summ is nil, a summarizer is created from cfg.
@@ -45,13 +50,14 @@ func NewFileSystemMonitor(cfg *config.Config, log *logger.Logger, summ *summariz
 	}
 
 	return &FileSystemMonitor{
-		config:     cfg,
-		logger:     log,
-		summarizer: summ,
-		watcher:    watcher,
-		debouncer:  make(map[string]*time.Timer),
-		stopChan:   make(chan struct{}),
-		doneChan:   make(chan struct{}),
+		config:        cfg,
+		logger:        log,
+		summarizer:    summ,
+		watcher:       watcher,
+		debouncer:     make(map[string]*time.Timer),
+		lastProcessed: make(map[string]time.Time),
+		stopChan:      make(chan struct{}),
+		doneChan:      make(chan struct{}),
 	}, nil
 }
 
@@ -146,28 +152,38 @@ func (m *FileSystemMonitor) handleEvent(event fsnotify.Event) {
 		action = "deleted"
 	}
 
-	// Debounce the event
+	// Capture for closure so the timer callback uses this event, not a later one
+	filePath := event.Name
+	act := action
+
 	m.debouncerMu.Lock()
 	defer m.debouncerMu.Unlock()
 
 	// Cancel existing timer for this file
-	if timer, exists := m.debouncer[event.Name]; exists {
+	if timer, exists := m.debouncer[filePath]; exists {
 		timer.Stop()
 	}
 
-	// Create new timer
 	timer := time.AfterFunc(m.config.Filesystem.Debounce, func() {
-		m.processFileChange(event.Name, action)
+		m.processFileChange(filePath, act)
 		m.debouncerMu.Lock()
-		delete(m.debouncer, event.Name)
+		delete(m.debouncer, filePath)
 		m.debouncerMu.Unlock()
 	})
 
-	m.debouncer[event.Name] = timer
+	m.debouncer[filePath] = timer
 }
 
 // processFileChange processes a file change after debouncing
 func (m *FileSystemMonitor) processFileChange(filePath string, action string) {
+	m.processMu.Lock()
+	if last, ok := m.lastProcessed[filePath]; ok && time.Since(last) < pathCooldown {
+		m.processMu.Unlock()
+		return
+	}
+	m.lastProcessed[filePath] = time.Now() // Block concurrent timers for same path
+	m.processMu.Unlock()
+
 	// Get diff if configured and file exists
 	diff := ""
 	if m.config.Filesystem.TrackDiffs && action != "deleted" {

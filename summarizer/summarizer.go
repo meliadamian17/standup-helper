@@ -18,6 +18,7 @@ type Summarizer struct {
 	baseURL    string
 	model      string
 	enabled    bool
+	keepAlive  string // e.g. "0" to unload after each request
 	httpClient *http.Client
 }
 
@@ -28,10 +29,11 @@ func (s *Summarizer) GetBaseURL() string {
 
 // OllamaRequest represents the request to Ollama API
 type OllamaRequest struct {
-	Model    string    `json:"model"`
-	Prompt   string    `json:"prompt"`
-	Stream   bool      `json:"stream"`
-	Options  Options   `json:"options"`
+	Model     string  `json:"model"`
+	Prompt    string  `json:"prompt"`
+	Stream    bool    `json:"stream"`
+	Options   Options `json:"options"`
+	KeepAlive string  `json:"keep_alive,omitempty"`
 }
 
 // Options for Ollama generation
@@ -47,16 +49,20 @@ type OllamaResponse struct {
 }
 
 // NewSummarizer creates a new summarizer instance
-func NewSummarizer(baseURL, model string, enabled bool) *Summarizer {
+func NewSummarizer(baseURL, model string, enabled bool, keepAlive string) *Summarizer {
 	// Auto-detect Ollama URL if not provided or empty
 	if baseURL == "" {
 		baseURL = detectOllamaURL()
 	}
+	if keepAlive == "" {
+		keepAlive = "0"
+	}
 
 	return &Summarizer{
-		baseURL: baseURL,
-		model:   model,
-		enabled: enabled,
+		baseURL:   baseURL,
+		model:     model,
+		enabled:   enabled,
+		keepAlive: keepAlive,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -109,12 +115,16 @@ func checkOllamaURL(url string) bool {
 // SummarizeDiff summarizes a git diff using the local LLM
 func (s *Summarizer) SummarizeDiff(diff string, filePath string) (string, error) {
 	if !s.enabled {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Summarizer is disabled\n")
 		return diff, nil // Return original diff if summarization is disabled
 	}
 
 	if diff == "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Empty diff provided, skipping summarization\n")
 		return "", nil
 	}
+
+	fmt.Fprintf(os.Stderr, "[DEBUG] Calling Ollama API at %s with model %s\n", s.baseURL, s.model)
 
 	// Truncate very long diffs to avoid token limits
 	maxDiffLength := 8000
@@ -128,10 +138,12 @@ func (s *Summarizer) SummarizeDiff(diff string, filePath string) (string, error)
 	// Call Ollama API
 	summary, err := s.callOllama(prompt)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Ollama API call failed: %v\n", err)
 		// If summarization fails, return original diff
 		return diff, fmt.Errorf("summarization failed: %w", err)
 	}
 
+	fmt.Fprintf(os.Stderr, "[DEBUG] Ollama API call successful, summary length: %d\n", len(summary))
 	return summary, nil
 }
 
@@ -152,9 +164,10 @@ func (s *Summarizer) callOllama(prompt string) (string, error) {
 	url := fmt.Sprintf("%s/api/generate", s.baseURL)
 
 	req := OllamaRequest{
-		Model:  s.model,
-		Prompt: prompt,
-		Stream: false,
+		Model:     s.model,
+		Prompt:    prompt,
+		Stream:    false,
+		KeepAlive: s.keepAlive,
 		Options: Options{
 			Temperature: 0.3, // Lower temperature for more focused summaries
 			MaxTokens:   200, // Limit response length
@@ -195,6 +208,34 @@ func (s *Summarizer) callOllama(prompt string) (string, error) {
 	}
 
 	return summary, nil
+}
+
+// SummarizeDay produces a standup-friendly summary of the day's log content using the LLM
+func (s *Summarizer) SummarizeDay(dayLogContent string) (string, error) {
+	if !s.enabled {
+		return "", nil
+	}
+	if dayLogContent == "" {
+		return "", nil
+	}
+
+	const maxDayContentLength = 12000
+	if len(dayLogContent) > maxDayContentLength {
+		dayLogContent = dayLogContent[:maxDayContentLength] + "\n... (truncated)"
+	}
+
+	prompt := fmt.Sprintf(`Summarize this day's development activity for a standup. Output 3-5 bullet points: what was worked on, key changes, and any notable commits or file changes. Be concise.
+
+Day log:
+%s
+
+Standup summary (3-5 bullet points):`, dayLogContent)
+
+	summary, err := s.callOllama(prompt)
+	if err != nil {
+		return "", fmt.Errorf("day summarization failed: %w", err)
+	}
+	return strings.TrimSpace(summary), nil
 }
 
 // IsAvailable checks if Ollama is available

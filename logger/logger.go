@@ -124,6 +124,9 @@ func (l *Logger) checkExistingSections(logPath string) {
 	if strings.Contains(content, "## Summary") {
 		l.sectionsWritten["Summary"] = true
 	}
+	if strings.Contains(content, "## AI Day Summary") {
+		l.sectionsWritten["AI Day Summary"] = true
+	}
 }
 
 // LogFileChange logs a file system change
@@ -137,6 +140,52 @@ func (l *Logger) LogFileChange(change FileChange) error {
 
 	l.fileChanges = append(l.fileChanges, change)
 	return nil
+}
+
+// GetCurrentDayLogContent returns the content of the current day's log file for AI summarization.
+// Caller should ensure Flush has been called first if pending changes should be included.
+func (l *Logger) GetCurrentDayLogContent() (string, error) {
+	if err := l.ensureLogFile(); err != nil {
+		return "", err
+	}
+	l.mu.Lock()
+	logPath := filepath.Join(l.logDir, fmt.Sprintf("standup-%s.md", l.currentDate))
+	l.mu.Unlock()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return "", fmt.Errorf("read day log: %w", err)
+	}
+	return string(data), nil
+}
+
+// HasWrittenAIDaySummary returns whether the AI Day Summary section has been written for the current day
+func (l *Logger) HasWrittenAIDaySummary() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sectionsWritten["AI Day Summary"]
+}
+
+// WriteDaySummary appends the "## AI Day Summary" section with the given content once per day
+func (l *Logger) WriteDaySummary(summary string) error {
+	if err := l.ensureLogFile(); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.sectionsWritten["AI Day Summary"] {
+		return nil // Already written today
+	}
+	if _, err := l.currentFile.WriteString("## AI Day Summary\n\n"); err != nil {
+		return err
+	}
+	l.sectionsWritten["AI Day Summary"] = true
+	if _, err := l.currentFile.WriteString(summary); err != nil {
+		return err
+	}
+	if _, err := l.currentFile.WriteString("\n"); err != nil {
+		return err
+	}
+	return l.currentFile.Sync()
 }
 
 // LogGitCommit logs a git commit

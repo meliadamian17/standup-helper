@@ -3,6 +3,7 @@ directories:
   # Example:
   # - /Users/meliadamian17/repos/project1
   # - /Users/meliadamian17/repos/project2
+  - "~/repos"
 
 exclusions:
   - node_modules
@@ -11,6 +12,66 @@ exclusions:
   - build
   - .DS_Store
   - "*.log"
+  # Binary file extensions
+  - "*.exe"
+  - "*.dll"
+  - "*.so"
+  - "*.dylib"
+  - "*.bin"
+  - "*.o"
+  - "*.a"
+  - "*.lib"
+  # Archives
+  - "*.zip"
+  - "*.tar"
+  - "*.gz"
+  - "*.bz2"
+  - "*.xz"
+  # Images
+  - "*.jpg"
+  - "*.jpeg"
+  - "*.png"
+  - "*.gif"
+  - "*.bmp"
+  - "*.ico"
+  - "*.webp"
+  - "*.tiff"
+  # Media files
+  - "*.mp3"
+  - "*.mp4"
+  - "*.avi"
+  - "*.mov"
+  - "*.wmv"
+  # Documents
+  - "*.pdf"
+  - "*.doc"
+  - "*.docx"
+  - "*.xls"
+  - "*.xlsx"
+  - "*.ppt"
+  - "*.pptx"
+  # Fonts
+  - "*.woff"
+  - "*.woff2"
+  - "*.ttf"
+  - "*.otf"
+  - "*.eot"
+  # Databases
+  - "*.db"
+  - "*.sqlite"
+  - "*.sqlite3"
+  # Compiled code
+  - "*.class"
+  - "*.jar"
+  - "*.war"
+  - "*.pyc"
+  - "*.pyo"
+  - "*.pyd"
+  # Packages
+  - "*.dmg"
+  - "*.pkg"
+  - "*.deb"
+  - "*.rpm"
 
 git:
   poll_interval: 30s
@@ -18,9 +79,13 @@ git:
 
 filesystem:
   debounce: 2s
-  track_diffs: false 
+  track_diffs: true 
 
 summarizer:
   enabled: false
   # base_url is optional - will be auto-detected from OLLAMA_HOST or common ports
   model: llama3.2
+  # keep_alive: "0" unloads model after each request (avoids context buildup); use "5m" etc. to keep loaded
+  keep_alive: "0"
+  end_of_day_summary: false
+  end_of_day_time: "18:00"

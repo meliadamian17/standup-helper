@@ -1,0 +1,19 @@
+# Minimal config for integration tests. Tests replace directories with t.TempDir() paths.
+directories:
+  - /tmp/standup-helper-test-placeholder
+
+exclusions:
+  - node_modules
+  - .git
+
+git:
+  poll_interval: 30s
+  track_commits: true
+
+filesystem:
+  debounce: 2s
+  track_diffs: true
+
+summarizer:
+  enabled: false
+  model: llama3.2

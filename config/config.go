@@ -33,9 +33,12 @@ type FSConfig struct {
 
 // SummarizerConfig contains summarization settings
 type SummarizerConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	BaseURL string `yaml:"base_url,omitempty"` // Optional - will be auto-detected if empty
-	Model   string `yaml:"model"`
+	Enabled          bool   `yaml:"enabled"`
+	BaseURL          string `yaml:"base_url,omitempty"` // Optional - will be auto-detected if empty
+	Model            string `yaml:"model"`
+	KeepAlive        string `yaml:"keep_alive,omitempty"`         // e.g. "0" to unload after each request, "5m" for default
+	EndOfDaySummary  bool   `yaml:"end_of_day_summary,omitempty"` // Generate AI day summary at end_of_day_time
+	EndOfDayTime     string `yaml:"end_of_day_time,omitempty"`    // Time of day for daily summary, e.g. "18:00"
 }
 
 // LoadConfig loads configuration from the specified path
@@ -120,6 +123,12 @@ func (c *Config) Validate() error {
 	if c.Summarizer.Model == "" {
 		c.Summarizer.Model = "llama3.2" // Default to a common lightweight model
 	}
+	if c.Summarizer.KeepAlive == "" {
+		c.Summarizer.KeepAlive = "0" // Unload model after each request to avoid context buildup
+	}
+	if c.Summarizer.EndOfDayTime == "" {
+		c.Summarizer.EndOfDayTime = "18:00"
+	}
 
 	return nil
 }
@@ -166,9 +175,12 @@ func CreateDefaultConfig(configPath string) error {
 			TrackDiffs: true,
 		},
 		Summarizer: SummarizerConfig{
-			Enabled: false, // Disabled by default
-			BaseURL: "",    // Auto-detected if empty
-			Model:   "llama3.2",
+			Enabled:         false,  // Disabled by default
+			BaseURL:         "",     // Auto-detected if empty
+			Model:           "llama3.2",
+			KeepAlive:       "0",    // Unload after each request to avoid context buildup
+			EndOfDaySummary: false,
+			EndOfDayTime:    "18:00",
 		},
 	}
 

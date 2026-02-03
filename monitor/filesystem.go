@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"standup-helper/config"
 	"standup-helper/logger"
 	"standup-helper/summarizer"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // FileSystemMonitor monitors file system changes
@@ -27,19 +28,21 @@ type FileSystemMonitor struct {
 	doneChan   chan struct{}
 }
 
-// NewFileSystemMonitor creates a new file system monitor
-func NewFileSystemMonitor(cfg *config.Config, log *logger.Logger) (*FileSystemMonitor, error) {
+// NewFileSystemMonitor creates a new file system monitor. If summ is nil, a summarizer is created from cfg.
+func NewFileSystemMonitor(cfg *config.Config, log *logger.Logger, summ *summarizer.Summarizer) (*FileSystemMonitor, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file watcher: %w", err)
 	}
 
-	// Create summarizer if enabled
-	summ := summarizer.NewSummarizer(
-		cfg.Summarizer.BaseURL,
-		cfg.Summarizer.Model,
-		cfg.Summarizer.Enabled,
-	)
+	if summ == nil {
+		summ = summarizer.NewSummarizer(
+			cfg.Summarizer.BaseURL,
+			cfg.Summarizer.Model,
+			cfg.Summarizer.Enabled,
+			cfg.Summarizer.KeepAlive,
+		)
+	}
 
 	return &FileSystemMonitor{
 		config:     cfg,
@@ -175,12 +178,23 @@ func (m *FileSystemMonitor) processFileChange(filePath string, action string) {
 
 	// Summarize diff if summarizer is enabled
 	if diff != "" && m.summarizer != nil {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Attempting to summarize diff for %s (diff length: %d)\n", filePath, len(diff))
 		summary, err := m.summarizer.SummarizeDiff(diff, filePath)
-		if err == nil && summary != "" {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Summarization failed for %s: %v\n", filePath, err)
+		} else if summary != "" {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Summarization successful for %s (summary length: %d)\n", filePath, len(summary))
 			// Use summary instead of full diff
 			diff = fmt.Sprintf("Summary: %s\n\nFull diff:\n%s", summary, diff)
+		} else {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Summarization returned empty summary for %s\n", filePath)
 		}
-		// If summarization fails, we'll just use the original diff
+	} else {
+		if diff == "" {
+			fmt.Fprintf(os.Stderr, "[DEBUG] No diff available for %s (track_diffs: %v, action: %s)\n", filePath, m.config.Filesystem.TrackDiffs, action)
+		} else if m.summarizer == nil {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Summarizer is nil for %s\n", filePath)
+		}
 	}
 
 	change := logger.FileChange{
